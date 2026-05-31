@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="單字庫">
+<meta name="theme-color" content="#0d1117">
+<title>單字庫 Vocab Pro</title>
+<style>
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; }
+html, body { background: #0d1117; min-height: 100vh; font-family: system-ui, sans-serif; color: #e0e0e0; overscroll-behavior: none; }
+::-webkit-scrollbar { display: none; }
+input, button { font-family: inherit; }
+input::placeholder { color: #37474f; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useEffect } = React;
+const STORAGE_KEY = "vocabPro_v4";
+
+function sm2(word, grade) {
+  const now = Date.now();
+  let { interval = 1, repetitions = 0, easeFactor = 2.5 } = word.sm2 || {};
+  if (grade < 1) { repetitions = 0; interval = 1; }
+  else {
+    if (repetitions === 0) interval = 1;
+    else if (repetitions === 1) interval = 3;
+    else interval = Math.round(interval * easeFactor);
+    repetitions++;
+    easeFactor = Math.max(1.3, easeFactor + 0.1 - (3-grade)*(0.08+(3-grade)*0.02));
+  }
+  return { ...word, sm2: { interval, repetitions, easeFactor, nextReview: now + interval*86400000 } };
+}
+const isDue = w => !w.sm2 || w.sm2.nextReview <= Date.now();
+
+function speak(text) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "en-US"; u.rate = 0.85;
+  window.speechSynthesis.speak(u);
+}
+
+async function analyzeWord(word) {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 1000,
+      messages: [{ role: "user", content: `Analyze the English word "${word}" and return ONLY valid JSON, no markdown:
+{"word":"${word}","phonetic":"IPA","meaning":"繁體中文意思","roots":[{"root":"字根","origin":"Latin/Greek","meaning":"中文"}],"breakdown":"繁體中文記憶邏輯","example":"英文例句","exampleTw":"中文翻譯","family":[{"word":"related1","meaning":"中文"},{"word":"related2","meaning":"中文"},{"word":"related3","meaning":"中文"}],"topic":"商業/學術/日常/科技/醫療/法律/藝術/自然"}` }]
+    })
+  });
+  const data = await res.json();
+  const text = (data.content||[]).map(i=>i.text||"").join("");
+  return JSON.parse(text.replace(/```json|```/g,"").trim());
+}
+
+const INIT = [
+  {id:1,word:"Resilient",phonetic:"/rɪˈzɪliənt/",meaning:"有韌性的、能快速恢復的",roots:[{root:"resil",origin:"Latin",meaning:"彈回"}],breakdown:"re（回）+ salire（跳）→ 彈跳回來 → 有韌性的",example:"She remained resilient throughout the crisis.",exampleTw:"她在整個危機中保持了韌性。",family:[{word:"resilience",meaning:"韌性、復原力"}],topic:"學術",sm2:null},
+  {id:2,word:"Ephemeral",phonetic:"/ɪˈfemərəl/",meaning:"短暫的、轉瞬即逝的",roots:[{root:"hemera",origin:"Greek",meaning:"一天"}],breakdown:"epi（在上）+ hemera（一天）→ 短暫的",example:"Social media fame is often ephemeral.",exampleTw:"社群媒體的名氣往往是短暫的。",family:[{word:"ephemera",meaning:"短暫的事物"}],topic:"學術",sm2:null},
+];
+
+const Pill = ({label,color="#4a9eff"}) => (
+  <span style={{display:"inline-block",padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:600,background:color+"22",color,border:`1px solid ${color}44`,marginRight:4,marginBottom:3}}>{label}</span>
+);
+
+function WordDetail({word,onClose,onAddFamily,words}) {
+  const has = w => words.some(x=>x.word.toLowerCase()===w.toLowerCase());
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:50,display:"flex",alignItems:"flex-end"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:"#141b24",borderRadius:"20px 20px 0 0",padding:"24px 20px 52px",width:"100%",maxHeight:"90vh",overflowY:"auto",border:"1px solid rgba(255,255,255,0.08)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+          <div>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+              <h2 style={{color:"#e0e0e0",fontSize:26,fontWeight:700,margin:0}}>{word.word}</h2>
+              <button onClick={()=>speak(word.word)} style={{padding:"5px 12px",borderRadius:20,background:"rgba(74,158,255,0.12)",border:"1px solid rgba(74,158,255,0.3)",color:"#4a9eff",fontSize:12,cursor:"pointer"}}>🔊 發音</button>
+            </div>
+            {word.phonetic&&<p style={{color:"#546e7a",fontSize:14,margin:"0 0 4px"}}>{word.phonetic}</p>}
+            <p style={{color:"#7ec8e3",fontSize:17,fontWeight:600,margin:0}}>{word.meaning}</p>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#546e7a",fontSize:24,cursor:"pointer"}}>✕</button>
+        </div>
+        {word.roots?.length>0&&<div style={{marginBottom:16,paddingBottom:16,borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+          <p style={{color:"#37474f",fontSize:11,letterSpacing:2,margin:"0 0 10px"}}>字根拆解</p>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
+            {word.roots.map((r,i)=><div key={i} style={{padding:"8px 12px",background:"rgba(126,200,227,0.06)",border:"1px solid rgba(126,200,227,0.15)",borderRadius:10,fontSize:13}}>
+              <span style={{color:"#7ec8e3",fontWeight:700}}>{r.root}</span>
+              <span style={{color:"#455a64",fontSize:11}}> {r.origin} </span>
+              <span style={{color:"#b0bec5"}}>＝ {r.meaning}</span>
+            </div>)}
+          </div>
+          {word.breakdown&&<p style={{color:"#78909c",fontSize:13,margin:0,lineHeight:1.6,background:"rgba(255,255,255,0.02)",padding:"10px 12px",borderRadius:8}}>{word.breakdown}</p>}
+        </div>}
+        {word.example&&<div style={{marginBottom:16,paddingBottom:16,borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+          <p style={{color:"#37474f",fontSize:11,letterSpacing:2,margin:"0 0 8px"}}>例句</p>
+          <p style={{color:"#cfd8dc",fontSize:14,fontStyle:"italic",margin:"0 0 4px"}}>"{word.example}"</p>
+          {word.exampleTw&&<p style={{color:"#546e7a",fontSize:13,margin:0}}>{word.exampleTw}</p>}
+        </div>}
+        {word.family?.length>0&&<div style={{marginBottom:16}}>
+          <p style={{color:"#37474f",fontSize:11,letterSpacing:2,margin:"0 0 10px"}}>家族單字</p>
+          {word.family.map((f,i)=><div key={i} style={{display:"flex",alignItems:"center",padding:"9px 12px",background:"rgba(255,255,255,0.02)",borderRadius:10,marginBottom:6,gap:8}}>
+            <span style={{color:"#e0e0e0",fontWeight:600}}>{f.word}</span>
+            <button onClick={()=>speak(f.word)} style={{background:"none",border:"none",color:"#546e7a",cursor:"pointer",fontSize:14}}>🔊</button>
+            <span style={{color:"#546e7a",fontSize:13,flex:1}}>{f.meaning}</span>
+            {has(f.word)?<span style={{fontSize:11,color:"#4caf50"}}>✓ 已收錄</span>
+              :<button onClick={()=>onAddFamily(f.word)} style={{padding:"4px 10px",borderRadius:20,background:"rgba(74,158,255,0.15)",border:"1px solid rgba(74,158,255,0.3)",color:"#4a9eff",fontSize:12,cursor:"pointer"}}>+ 加入</button>}
+          </div>)}
+        </div>}
+        {word.sm2&&<p style={{color:"#37474f",fontSize:12,margin:"8px 0 0"}}>複習 {word.sm2.repetitions} 次 · 下次 {new Date(word.sm2.nextReview).toLocaleDateString("zh-TW")}</p>}
+      </div>
+    </div>
+  );
+}
+
+function AddModal({initial="",onAdd,onClose}) {
+  const [input,setInput] = useState(initial);
+  const [loading,setLoading] = useState(false);
+  const [err,setErr] = useState("");
+  const go = async () => {
+    const w = input.trim();
+    if (!w) { setErr("請輸入單字"); return; }
+    setLoading(true); setErr("");
+    try {
+      const data = await analyzeWord(w);
+      onAdd({id:Date.now(),...data});
+      onClose();
+    } catch {
+      setErr("AI 分析失敗，請確認網路後重試");
+      setLoading(false);
+    }
+  };
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:50,display:"flex",alignItems:"flex-end"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:"#141b24",borderRadius:"20px 20px 0 0",padding:"24px 20px 52px",width:"100%",border:"1px solid rgba(255,255,255,0.08)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <h3 style={{color:"#e0e0e0",margin:0,fontSize:18}}>新增單字</h3>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#546e7a",fontSize:24,cursor:"pointer"}}>✕</button>
+        </div>
+        <p style={{color:"#455a64",fontSize:13,marginBottom:14}}>AI 自動分析字根、例句、家族單字</p>
+        <input autoFocus value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()}
+          placeholder="輸入英文單字…"
+          style={{width:"100%",padding:"14px",borderRadius:12,border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.04)",color:"#cfd8dc",fontSize:16,outline:"none",boxSizing:"border-box"}}/>
+        {err&&<p style={{color:"#ef5350",fontSize:13,margin:"8px 0 0"}}>{err}</p>}
+        <button onClick={go} disabled={loading}
+          style={{width:"100%",padding:15,borderRadius:12,background:loading?"#1a2332":"linear-gradient(135deg,#4a9eff,#1976d2)",border:"none",color:loading?"#37474f":"#fff",fontSize:16,fontWeight:700,cursor:"pointer",marginTop:16}}>
+          {loading?"⏳ AI 分析中…（約 5–10 秒）":"新增並分析"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ReviewScreen({words,onUpdate,onBack}) {
+  const due = words.filter(isDue);
+  const [queue] = useState(()=>[...due].sort(()=>Math.random()-.5));
+  const [idx,setIdx] = useState(0);
+  const [flipped,setFlipped] = useState(false);
+  const [done,setDone] = useState(false);
+
+  if (due.length===0||done||idx>=queue.length) return (
+    <div style={{textAlign:"center",padding:"80px 20px"}}>
+      <div style={{fontSize:56,marginBottom:12}}>{due.length===0?"🎯":"✨"}</div>
+      <p style={{color:"#e0e0e0",fontSize:20,fontWeight:700}}>{due.length===0?"今天全部複習完畢！":"本輪複習完成！"}</p>
+      <p style={{color:"#455a64",fontSize:14,marginBottom:28}}>{due.length===0?"明天繼續加油":`共複習了 ${queue.length} 個單字`}</p>
+      <button onClick={onBack} style={{padding:"13px 32px",borderRadius:12,background:"linear-gradient(135deg,#4a9eff,#1976d2)",border:"none",color:"#fff",fontSize:15,fontWeight:700,cursor:"pointer"}}>返回</button>
+    </div>
+  );
+
+  const card = queue[idx];
+  const grade = g => {
+    onUpdate(sm2(card,g));
+    if (idx+1>=queue.length) setDone(true);
+    else { setIdx(i=>i+1); setFlipped(false); }
+  };
+
+  return (
+    <div style={{padding:"0 16px 100px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,padding:"20px 0"}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:"#546e7a",fontSize:26,cursor:"pointer"}}>‹</button>
+        <div style={{flex:1,height:5,background:"rgba(255,255,255,0.07)",borderRadius:3}}>
+          <div style={{height:"100%",width:`${(idx/queue.length)*100}%`,background:"linear-gradient(90deg,#4a9eff,#7ec8e3)",borderRadius:3,transition:"width .3s"}}/>
+        </div>
+        <span style={{color:"#455a64",fontSize:13}}>{idx+1}/{queue.length}</span>
+      </div>
+      <div onClick={()=>setFlipped(f=>!f)} style={{background:"linear-gradient(135deg,rgba(74,158,255,0.07),rgba(255,255,255,0.02))",border:"1px solid rgba(74,158,255,0.15)",borderRadius:20,padding:"44px 24px",textAlign:"center",cursor:"pointer",minHeight:220,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:16}}>
+        {!flipped?<div>
+          <p style={{color:"#37474f",fontSize:11,letterSpacing:3,marginBottom:16}}>TAP TO REVEAL</p>
+          <p style={{color:"#e0e0e0",fontSize:38,fontWeight:700,margin:0}}>{card.word}</p>
+          {card.phonetic&&<p style={{color:"#455a64",fontSize:16,marginTop:8}}>{card.phonetic}</p>}
+          <button onClick={e=>{e.stopPropagation();speak(card.word);}} style={{marginTop:18,padding:"6px 14px",borderRadius:20,background:"rgba(74,158,255,0.12)",border:"1px solid rgba(74,158,255,0.25)",color:"#4a9eff",fontSize:13,cursor:"pointer"}}>🔊 發音</button>
+        </div>:<div>
+          <p style={{color:"#7ec8e3",fontSize:22,fontWeight:700,marginBottom:10}}>{card.meaning}</p>
+          {card.roots?.length>0&&<div style={{marginBottom:10}}>{card.roots.map((r,i)=><Pill key={i} label={`${r.root} = ${r.meaning}`} color="#7ec8e3"/>)}</div>}
+          {card.example&&<p style={{color:"#37474f",fontSize:13,fontStyle:"italic"}}>"{card.example}"</p>}
+        </div>}
+      </div>
+      {flipped&&<div>
+        <p style={{color:"#37474f",fontSize:12,textAlign:"center",marginBottom:10}}>你記得多清楚？</p>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          {[{g:0,label:"完全忘記",c:"#ef5350"},{g:1,label:"有點模糊",c:"#ff9800"},{g:2,label:"記得",c:"#66bb6a"},{g:3,label:"輕鬆記得",c:"#4a9eff"}].map(({g,label,c})=>(
+            <button key={g} onClick={()=>grade(g)} style={{padding:14,borderRadius:12,border:`1px solid ${c}44`,background:`${c}15`,color:c,fontSize:14,fontWeight:600,cursor:"pointer"}}>{label}</button>
+          ))}
+        </div>
+      </div>}
+    </div>
+  );
+}
+
+function App() {
+  const [words,setWords] = useState(()=>{ try{const s=localStorage.getItem(STORAGE_KEY);return s?JSON.parse(s):INIT;}catch{return INIT;} });
+  const [showAdd,setShowAdd] = useState(false);
+  const [addInitial,setAddInitial] = useState("");
+  const [selected,setSelected] = useState(null);
+  const [reviewing,setReviewing] = useState(false);
+  const [search,setSearch] = useState("");
+  const [selTopic,setSelTopic] = useState("全部");
+  const [clipWord,setClipWord] = useState("");
+
+  useEffect(()=>{ try{localStorage.setItem(STORAGE_KEY,JSON.stringify(words));}catch{} },[words]);
+
+  useEffect(()=>{
+    const check = async()=>{
+      try{
+        const text = await navigator.clipboard.readText();
+        const w = text.trim().split(/\s+/)[0];
+        if(w&&/^[a-zA-Z-]+$/.test(w)&&w.length>1&&!words.some(x=>x.word.toLowerCase()===w.toLowerCase()))
+          setClipWord(w);
+      }catch{}
+    };
+    check();
+    document.addEventListener("visibilitychange",()=>{ if(!document.hidden) check(); });
+  },[]);
+
+  const addWord = w => setWords(p=>p.some(x=>x.word.toLowerCase()===w.word.toLowerCase())?p:[w,...p]);
+  const deleteWord = id => setWords(p=>p.filter(w=>w.id!==id));
+  const updateWord = w => setWords(p=>p.map(x=>x.id===w.id?w:x));
+  const openAdd = (i="")=>{ setAddInitial(i); setShowAdd(true); };
+
+  const dueCount = words.filter(isDue).length;
+  const topics = ["全部",...new Set(words.map(w=>w.topic||"其他"))];
+  const filtered = words.filter(w=>{
+    const ms = !search||w.word.toLowerCase().includes(search.toLowerCase())||(w.meaning||"").includes(search);
+    const mt = selTopic==="全部"||(w.topic||"其他")===selTopic;
+    return ms&&mt;
+  });
+
+  if(reviewing) return <div style={{minHeight:"100vh",background:"#0d1117"}}><ReviewScreen words={words} onUpdate={updateWord} onBack={()=>setReviewing(false)}/></div>;
+
+  return (
+    <div style={{minHeight:"100vh",background:"#0d1117",maxWidth:430,margin:"0 auto"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"52px 16px 14px"}}>
+        <div>
+          <p style={{color:"#4a9eff",fontSize:10,letterSpacing:3,margin:"0 0 2px",fontFamily:"monospace"}}>VOCAB PRO</p>
+          <h1 style={{color:"#cfd8dc",fontSize:24,fontWeight:700,margin:0}}>我的單字庫</h1>
+        </div>
+        <button onClick={()=>openAdd()} style={{width:52,height:52,borderRadius:"50%",background:"linear-gradient(135deg,#4a9eff,#1565c0)",border:"none",color:"#fff",fontSize:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 20px #4a9eff44"}}>+</button>
+      </div>
+
+      {clipWord&&<div style={{margin:"0 16px 12px",background:"rgba(126,200,227,0.08)",border:"1px solid rgba(126,200,227,0.2)",borderRadius:14,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div>
+          <p style={{color:"#607d8b",fontSize:12,margin:"0 0 2px"}}>📋 偵測到剪貼簿</p>
+          <p style={{color:"#7ec8e3",fontWeight:700,fontSize:16,margin:0}}>{clipWord}</p>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>setClipWord("")} style={{padding:"7px 14px",borderRadius:20,background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"#546e7a",fontSize:13,cursor:"pointer"}}>略過</button>
+          <button onClick={()=>{openAdd(clipWord);setClipWord("");}} style={{padding:"7px 16px",borderRadius:20,background:"rgba(74,158,255,0.2)",border:"1px solid rgba(74,158,255,0.4)",color:"#4a9eff",fontSize:13,fontWeight:700,cursor:"pointer"}}>+ 新增</button>
+        </div>
+      </div>}
+
+      {dueCount>0&&<div onClick={()=>setReviewing(true)} style={{margin:"0 16px 16px",background:"linear-gradient(135deg,#1565c0,#0d47a1)",borderRadius:16,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+        <div>
+          <p style={{color:"#fff",fontWeight:700,fontSize:15,margin:"0 0 2px"}}>今日待複習</p>
+          <p style={{color:"rgba(255,255,255,0.6)",fontSize:13,margin:0}}>{dueCount} 個單字需要複習</p>
+        </div>
+        <div style={{background:"rgba(255,255,255,0.2)",borderRadius:20,padding:"6px 14px",color:"#fff",fontWeight:700}}>{dueCount} →</div>
+      </div>}
+
+      <div style={{padding:"0 16px",marginBottom:10}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 搜尋單字…"
+          style={{width:"100%",padding:"13px 14px",borderRadius:12,border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.04)",color:"#cfd8dc",fontSize:15,outline:"none",boxSizing:"border-box"}}/>
+      </div>
+
+      <div style={{display:"flex",gap:6,overflowX:"auto",padding:"0 16px 12px"}}>
+        {topics.map(t=><button key={t} onClick={()=>setSelTopic(t)} style={{padding:"6px 14px",borderRadius:20,border:`1px solid ${selTopic===t?"rgba(126,200,227,0.4)":"rgba(255,255,255,0.07)"}`,background:selTopic===t?"rgba(126,200,227,0.15)":"transparent",color:selTopic===t?"#7ec8e3":"#37474f",fontSize:12,cursor:"pointer",whiteSpace:"nowrap"}}>{t}</button>)}
+      </div>
+
+      <div style={{padding:"0 16px 110px"}}>
+        <p style={{color:"#37474f",fontSize:12,marginBottom:12}}>{filtered.length} 個單字</p>
+        {filtered.length===0&&<p style={{color:"#37474f",textAlign:"center",padding:"40px 0"}}>沒有符合的單字</p>}
+        {filtered.map(w=><div key={w.id} onClick={()=>setSelected(w)} style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.05)",borderLeft:isDue(w)?"3px solid #ff980066":"3px solid transparent",borderRadius:14,padding:"13px 14px",marginBottom:9,display:"flex",gap:10,cursor:"pointer"}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
+              <span style={{color:"#e0e0e0",fontSize:17,fontWeight:700}}>{w.word}</span>
+              {w.phonetic&&<span style={{color:"#37474f",fontSize:12}}>{w.phonetic}</span>}
+            </div>
+            <p style={{color:"#78909c",fontSize:13,margin:"0 0 4px"}}>{w.meaning}</p>
+            <div>{w.topic&&<Pill label={w.topic} color="#ab9df2"/>}{w.roots?.slice(0,1).map((r,i)=><Pill key={i} label={r.root} color="#7ec8e3"/>)}</div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,alignItems:"flex-end"}}>
+            <button onClick={e=>{e.stopPropagation();speak(w.word);}} style={{background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:8,color:"#546e7a",cursor:"pointer",padding:"6px 8px",fontSize:16}}>🔊</button>
+            <button onClick={e=>{e.stopPropagation();deleteWord(w.id);}} style={{background:"rgba(239,83,80,0.08)",border:"1px solid rgba(239,83,80,0.2)",borderRadius:8,color:"#ef5350",cursor:"pointer",padding:"6px 8px",fontSize:16}}>🗑</button>
+          </div>
+        </div>)}
+      </div>
+
+      <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:430,background:"rgba(13,17,23,0.97)",borderTop:"1px solid rgba(255,255,255,0.06)",padding:"10px 0 36px",display:"flex",justifyContent:"space-around"}}>
+        <div style={{color:"#4a9eff",display:"flex",flexDirection:"column",alignItems:"center",gap:3,fontSize:11}}>
+          <span style={{fontSize:22}}>🏠</span><span>單字庫</span>
+        </div>
+        <button onClick={()=>setReviewing(true)} style={{background:"none",border:"none",color:dueCount>0?"#ff9800":"#37474f",display:"flex",flexDirection:"column",alignItems:"center",gap:3,fontSize:11,cursor:"pointer"}}>
+          <span style={{fontSize:22}}>⏰</span><span>複習{dueCount>0?` (${dueCount})`:""}</span>
+        </button>
+      </div>
+
+      {showAdd&&<AddModal initial={addInitial} onAdd={addWord} onClose={()=>setShowAdd(false)}/>}
+      {selected&&<WordDetail word={selected} onClose={()=>setSelected(null)} onAddFamily={w=>{setSelected(null);openAdd(w);}} words={words}/>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("app")).render(<App/>);
+</script>
+</body>
+</html>
