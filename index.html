@@ -18,7 +18,6 @@ input::placeholder { color: #37474f; }
 </head>
 <body>
 <div id="app"></div>
-
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -52,7 +51,10 @@ function speak(text) {
 async function analyzeWord(word) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
       max_tokens: 1000,
@@ -134,7 +136,7 @@ function AddModal({initial="",onAdd,onClose}) {
       const data = await analyzeWord(w);
       onAdd({id:Date.now(),...data});
       onClose();
-    } catch {
+    } catch(e) {
       setErr("AI 分析失敗，請確認網路後重試");
       setLoading(false);
     }
